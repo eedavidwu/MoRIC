@@ -7,12 +7,13 @@
 </h1>
 
 <p align="center">
-  <a href="https://eedavidwu.github.io/">Haotian Wu</a>&nbsp;&nbsp;
-  <a href="https://gp-chen.github.io/">Gongpu Chen</a>&nbsp;&nbsp;
-  <a href="https://www.commsp.ee.ic.ac.uk/~pld/">Pier Luigi Dragotti</a>&nbsp;&nbsp;
+  <a href="https://www.imperial.ac.uk/information-processing-and-communications-lab/people/">Gen Li </a><sup>*</sup>&nbsp;&nbsp;
+  <a href="https://eedavidwu.github.io/">Haotian Wu</a><sup>*†</sup>&nbsp;&nbsp;
   <a href="https://www.imperial.ac.uk/information-processing-and-communications-lab/people/deniz/">Deniz Gündüz</a>  
   <br/>
   <strong>Imperial College London</strong>
+   <br/>
+  <sup>*</sup>Equal contribution &nbsp;&nbsp; <sup>†</sup>Project leader & Corresponding author
 </p>
 
 <p align="center">
