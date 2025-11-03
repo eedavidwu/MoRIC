@@ -26,10 +26,9 @@
 </p>
 
 ## 📣 Latest Updates
--  **[2025-06-28]** 📝 *More results with various mask ratio selections are updated in [results](https://github.com/eedavidwu/LotteryCodec/tree/master/results), which is also provided in the updated [paper](https://arxiv.org/abs/2507.01204v1). (Training CLIC2020 with more ratios costs lots of resources for us :) .)*
 -  **[2025-06-22]** 📝 *Resources, such as baseline implementations (VTM-19.1) with its datapoints are now updated on [resources](https://github.com/eedavidwu/LotteryCodec/blob/master/resource/README.md).*
-- **[2025-06-21]** 📝 *Detailed intermediate results are now released on [results](https://github.com/eedavidwu/LotteryCodec/tree/master/results).*
-- **[2025-06-01]** 🎉 *LotteryCodec has been accepted to **ICML 2025** as a **Spotlight**!*
+- **[2025-11-03]** 📝 *Detailed intermediate results are now released on [results](https://github.com/eedavidwu/LotteryCodec/tree/master/results).*
+- **[2025-10-31]** 🎉 *LotteryCodec has been accepted to **NeurIPS 2025**.
 
 ## 🔑 Key Takeaways
 
