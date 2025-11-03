@@ -17,31 +17,31 @@
 </p>
 
 <p align="center">
-  <a href="https://arxiv.org/pdf/2507.01204" target="_blank">
+  <a href="https://neurips.cc/virtual/2025/loc/san-diego/poster/118832" target="_blank">
     <img src="https://img.shields.io/badge/Paper-arXiv-deepgreen" alt="Paper arXiv">
   </a>
-  <a href="https://eedavidwu.github.io/LotteryCodec/" target="_blank">
+  <a href="https://eedavidwu.github.io/MoRIC/" target="_blank">
     <img src="https://img.shields.io/badge/Project-Page-blue" alt="Project Page">
   </a>
 </p>
 
 ## 📣 Latest Updates
--  **[2025-06-22]** 📝 *Resources, such as baseline implementations (VTM-19.1) with its datapoints are now updated on [resources](https://github.com/eedavidwu/LotteryCodec/blob/master/resource/README.md).*
-- **[2025-11-03]** 📝 *Detailed intermediate results are now released on [results](https://github.com/eedavidwu/LotteryCodec/tree/master/results).*
+- **[2025-11-03]** 📝 *Detailed intermediate results are now released on [results](https://github.com/eedavidwu/MoRIC/tree/main/results).*
 - **[2025-10-31]** 🎉 *LotteryCodec has been accepted to **NeurIPS 2025**.
 
 ## 🔑 Key Takeaways
 
-- **LotteryCodec** introduces a novel overfitted codec for low-complexity image compression. Instead of training a synthesis neural function, LotteryCodec searches for a well-performing subnetwork within a randomly initialized network!
+- **MoRIC** introduces a novel overfitted codec that assigns dedicated models to distinct regions in the image, each tai-
+lored to its local distribution. This region-wise compression design improves adaptation to local content distributions and supports flexible, region-specific control for enhanced compression efficiency!
 
-- A **Lottery Codec Hypothesis** is introduced: Win a lottery ticket as your own image codec!
+- A **Progressive Concatenated Modulation** is introduced: Achieve global–local information sharing and layered progressive compression.
 
 
 <p align="center">
-  <img src="docs/LCH.png" width="1000"/>
+  <img src="docs/Architecture.png" width="1000"/>
 </p>
 
-- To simplify the searching process and improve the performance, **LotteryCodec** employs a modulation-based new paradigm.
+- To simplify the searching process and improve the performance, **MoRIC** employs a modulation-based new paradigm.
 
 ![sicl](docs/SuperMask_fig_1.png)
 
@@ -50,9 +50,9 @@
 </p>
 
 ## About this code
-The LotteryCodec codebase is written in Python and provides fast configurations for the training. The core module structure is as follows:
+The MoRIC codebase is written in Python and provides fast configurations for the training. The core module structure is as follows:
 ```
-LotteryCodec/
+MoRIC/
 ├── dataset/                          # Folder for dataset.
 │   ├── CLIC2020.                
 │   ├── Kodak/                   
@@ -60,8 +60,8 @@ LotteryCodec/
 │   ├── training/                
 │   ├── utils/                 
 ├── models/                       # Main model.
+│   ├── candidate_train.py 
 │   └── model.py                  
-├── resource/                       # Resources for the baselines.
 ├── results            # Experimental results for various models.
 ├── utils            # Code for sub-model and functions such as quantization/ARM/...
 ├── train.py
@@ -72,12 +72,12 @@ The code is heavily based on the Cool-Chic project, an outstanding open-source w
 ## Results:
 A better RD performance:
 <p align="center">
-  <img src="docs/RD_Kodak_CLIC.png" width="1000"/>
+  <img src="docs/exp_results.png" width="1000"/>
 </p>
 
-Towards BD-rate vs. flexible complexity (a) Kodak and (b).CLIC2020:
+Towards BD-rate vs. flexible complexity (a) Davis (b) Kodak and (c)CLIC2020:
 <p align="center">
-  <img src="docs/BD-rate_com.png" width="1000"/>
+  <img src="docs/complexity_results.png" width="1000"/>
 </p>
 
 ## Contact
@@ -96,10 +96,10 @@ Please open an issue or submit a pull request for issues, or contributions.
 If you find our resource/idea is helpful, please cite our paper:
 
 ```
-  @article{LotteryCodec,
-    title={LotteryCodec: Searching the Implicit Representation in a Random Network for Low-Complexity Image Compression},
-    author={Haotian Wu, Gongpu Chen, Pier Luigi Dragotti, and Deniz Gündüz},
-    journal={International Conference on Machine Learning (ICML) 2025},
+  @article{MoRIC,
+    title={MoRIC: A Modular Region-based Implicit Codec for Image Compression},
+    author={Gen Li, Haotian Wu, and Deniz Gündüz},
+    journal={Conference on Neural Information Processing Systems},
     year={2025}
   }
 
