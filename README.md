@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/icon_dice.png" alt="LotteryCodec Icon" width="100"/>
+  <img src="docs/icon_dice.png" alt="MoRIC Icon" width="100"/>
 </p>
 
 <h1 align="center">
