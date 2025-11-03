@@ -34,19 +34,18 @@
 - **MoRIC** introduces a novel overfitted codec that assigns dedicated models to distinct regions in the image, each tai-
 lored to its local distribution. This region-wise compression design improves adaptation to local content distributions and supports flexible, region-specific control for enhanced compression efficiency!
 
+- **MoRIC** employs a Modular layered paradigm.
+
+<p align="center">
+  <img src="docs/Problem_formulation.png" width="1000"/>
+</p>
+
 - A **Progressive Concatenated Modulation** is introduced: Achieve global–local information sharing and layered progressive compression.
 
+![sicl](docs/workflow.png)
 
 <p align="center">
   <img src="docs/Architecture.png" width="1000"/>
-</p>
-
-- To simplify the searching process and improve the performance, **MoRIC** employs a modulation-based new paradigm.
-
-![sicl](docs/SuperMask_fig_1.png)
-
-<p align="center">
-  <img src="docs/Fig_3_masked_sys.png" width="1000"/>
 </p>
 
 ## About this code
