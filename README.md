@@ -27,7 +27,7 @@
 
 ## 📣 Latest Updates
 - **[2025-11-03]** 📝 *Detailed intermediate results are now released on [results](https://github.com/eedavidwu/MoRIC/tree/main/results).*
-- **[2025-10-31]** 🎉 *LotteryCodec has been accepted to **NeurIPS 2025**.
+- **[2025-10-31]** 🎉 *MoRIC has been accepted to **NeurIPS 2025**.
 
 ## 🔑 Key Takeaways
 
@@ -81,6 +81,7 @@ Towards BD-rate vs. flexible complexity (a) Davis (b) Kodak and (c)CLIC2020:
 
 ## Contact
 - Haotian Wu: haotian.wu17@imperial.ac.uk
+- Gen Li: gen.li22@imperial.ac.uk
 
 Please open an issue or submit a pull request for issues, or contributions.
 
