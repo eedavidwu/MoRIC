@@ -15,7 +15,7 @@ def BD_PSNR(R1, PSNR1, R2, PSNR2, piecewise=0):
     min_int = max(min(lR1), min(lR2))
     max_int = min(max(lR1), max(lR2))
 
-  
+   
     if piecewise == 0:
         p_int1 = np.polyint(p1)
         p_int2 = np.polyint(p2)
@@ -29,7 +29,7 @@ def BD_PSNR(R1, PSNR1, R2, PSNR2, piecewise=0):
         samples = lin[0]
         v1 = scipy.interpolate.pchip_interpolate(np.sort(lR1), PSNR1[np.argsort(lR1)], samples)
         v2 = scipy.interpolate.pchip_interpolate(np.sort(lR2), PSNR2[np.argsort(lR2)], samples)
-       
+        
         int1 = np.trapz(v1, dx=interval)
         int2 = np.trapz(v2, dx=interval)
 
@@ -43,11 +43,10 @@ def BD_RATE(R1, PSNR1, R2, PSNR2, piecewise=0):
     lR1 = np.log(R1)
     lR2 = np.log(R2)
 
-    
     p1 = np.polyfit(PSNR1, lR1, 3)
     p2 = np.polyfit(PSNR2, lR2, 3)
 
-    
+   
     min_int = max(min(PSNR1), min(PSNR2))
     max_int = min(max(PSNR1), max(PSNR2))
 
@@ -64,7 +63,7 @@ def BD_RATE(R1, PSNR1, R2, PSNR2, piecewise=0):
         samples = lin[0]
         v1 = scipy.interpolate.pchip_interpolate(np.sort(PSNR1), lR1[np.argsort(PSNR1)], samples)
         v2 = scipy.interpolate.pchip_interpolate(np.sort(PSNR2), lR2[np.argsort(PSNR2)], samples)
-       
+        
         int1 = np.trapz(v1, dx=interval)
         int2 = np.trapz(v2, dx=interval)
 

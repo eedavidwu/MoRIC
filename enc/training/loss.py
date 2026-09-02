@@ -1,25 +1,24 @@
+
+
 import math
 from dataclasses import dataclass, field
 from typing import Optional, Union
+
 import torch
 from enc.utils.codingstructure import DictTensorYUV
 from torch import Tensor
 
+
 @dataclass(kw_only=True)
 class LossFunctionOutput():
-   
- 
-    loss: Optional[float] = None                                     
+    loss: Optional[float] = None
 
-  
-    mse: Optional[float] = None                                        
-    rate_nn_bpp: Optional[float] = None                               
-    rate_latent_bpp: Optional[float] = None                             
+    mse: Optional[float] = None
+    rate_nn_bpp: Optional[float] = None
+    rate_latent_bpp: Optional[float] = None
 
-
-    psnr_db: Optional[float] = field(init=False, default=None)                               
-    total_rate_bpp: Optional[float] = field(init=False, default=None)   
-
+    psnr_db: Optional[float] = field(init=False, default=None)
+    total_rate_bpp: Optional[float] = field(init=False, default=None)
 
     def __post_init__(self):
         if self.mse is not None:
@@ -32,16 +31,13 @@ class LossFunctionOutput():
 def _compute_mse(
     x: Union[Tensor, DictTensorYUV], y: Union[Tensor, DictTensorYUV]
 ) -> Tensor:
-    
     flag_420 = not (isinstance(x, Tensor))
 
     if not flag_420:
         return ((x - y) ** 2).mean()
     else:
-       
         total_pixels_yuv = 0.0
 
-        
         mse = torch.zeros((1), device=x.get("y").device)
         for (_, x_channel), (_, y_channel) in zip(x.items(), y.items()):
             n_pixels_channel = x_channel.numel()
@@ -61,12 +57,10 @@ def loss_function(
     rate_mlp_bit: float = 0.0,
     compute_logs: bool = False,
 ) -> LossFunctionOutput:
-    
 
     mse = _compute_mse(decoded_image, target_image)
 
     n_pixels=decoded_image.shape[1]
-   
     rate_MLP=rate_mlp_bit/n_pixels
     rate_bpp = (rate_latent_bit.sum() + rate_mlp_bit) / n_pixels
 

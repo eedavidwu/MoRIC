@@ -1,13 +1,14 @@
+
 import math
 from typing import Literal, Optional
 import typing
+
 import torch
 from torch import Tensor
 
 
 @torch.jit.script
 def softround(x: Tensor, t: float) -> Tensor:
-   
     floor_x = torch.floor(x)
     delta = x - floor_x - 0.5
     return floor_x + 0.5 * torch.tanh(delta / t) / math.tanh(1 / (2 * t)) + 0.5
@@ -18,11 +19,10 @@ def generate_kumaraswamy_noise(
     uniform_noise: Tensor, kumaraswamy_param: float
 ) -> Tensor:
     
-   
     a = kumaraswamy_param
     b = (2**a * (a - 1) + 1) / a
 
- 
+    
     kumaraswamy_noise = (1 - (1 - uniform_noise) ** (1 / b)) ** (1 / a) - 0.5
 
     return kumaraswamy_noise
@@ -39,8 +39,8 @@ def quantize(
     soft_round_temperature: Optional[float] = 0.3,
     noise_parameter: Optional[float] = 1.0,
 ) -> Tensor:
-   
-    
+    # ----- Check user input
+    # TODO: How long is it to do such assert?
     assert quantizer_noise_type in typing.get_args(POSSIBLE_QUANTIZATION_NOISE_TYPE), (
         f"quantizer_noise_type must be in {POSSIBLE_QUANTIZATION_NOISE_TYPE}"
         f" found {quantizer_noise_type}"
@@ -50,7 +50,7 @@ def quantize(
         f"quantizer_type must be in {POSSIBLE_QUANTIZER_TYPE}" f"found {quantizer_type}"
     )
 
-    
+   
     if quantizer_type in ["softround_alone", "hardround", "ste", "none"]:
         if quantizer_noise_type != "none":
             s = (
@@ -68,7 +68,7 @@ def quantize(
             "noise such as 'gaussian' or 'kumaraswamy'."
         )
 
-   
+    # ------- Actually quantize
     match quantizer_noise_type:
         case "none":
             pass
@@ -92,11 +92,9 @@ def quantize(
                 soft_round_temperature,
             )
         case "ste":
-            
+           
             y = softround(x, soft_round_temperature)
-            with torch.no_grad():
-                y = y - softround(x, soft_round_temperature) + torch.round(x)
-            return y
+            return y + (torch.round(x) - y).detach()
         case "hardround":
             return torch.round(x)
         case _:

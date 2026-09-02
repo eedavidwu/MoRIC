@@ -7,7 +7,9 @@ import torch
 from torch import nn
 from enc.utils.misc import exp_golomb_nbins
 from enc.training.loss import loss_function
-
+from enc.utils.manager import FrameEncoderManager
+from enc.component.frame import FrameEncoder
+from enc.utils.codingstructure import Frame
 from enc.utils.misc import (
     MAX_AC_MAX_VAL,
     POSSIBLE_EXP_GOL_COUNT,
@@ -16,7 +18,7 @@ from enc.utils.misc import (
     get_q_step_from_parameter_name,
 )
 from torch import Tensor
-
+import argparse
 
 def _quantize_parameters(
     fp_param: OrderedDict[str, Tensor],
@@ -28,9 +30,10 @@ def _quantize_parameters(
         current_q_step = get_q_step_from_parameter_name(k, q_step)
         sent_param = torch.round(v / current_q_step)
 
-        if sent_param.abs().max() > MAX_AC_MAX_VAL:
-           
-            return None
+       
+        if sent_param.numel() != 0:
+            if sent_param.abs().max() > MAX_AC_MAX_VAL:
+                return None
 
         q_param[k] = sent_param * current_q_step
 
@@ -46,17 +49,17 @@ def quantize_model(frame_encoder,binary_mask,coords,frame_gt,args):
     mse_loss = nn.MSELoss().cuda()
 
 
-  
+   
     module_to_quantize = {
         module_name: getattr(frame_encoder, module_name)
         for module_name in frame_encoder.modules_to_send
     }
 
     for module_name, cur_module in sorted(module_to_quantize.items()):
-        
+       
         best_loss = 1e6
 
-      
+       
         all_q_step = POSSIBLE_Q_STEP.get(module_name)
         all_expgol_cnt = POSSIBLE_EXP_GOL_COUNT.get(module_name)
 
@@ -64,16 +67,16 @@ def quantize_model(frame_encoder,binary_mask,coords,frame_gt,args):
         fp_param = cur_module.get_param()
 
         best_q_step = {}
-        
+       
         final_best_expgol_cnt = {}
         for q_step_w, q_step_b in itertools.product(all_q_step.get("weight"), all_q_step.get("bias")):
         
             current_q_step: DescriptorNN = {"weight": q_step_w, "bias": q_step_b}
 
-           
+          
             q_param = _quantize_parameters(fp_param, current_q_step)
 
-          
+           
             if q_param is None:
                 continue
 
@@ -93,13 +96,13 @@ def quantize_model(frame_encoder,binary_mask,coords,frame_gt,args):
 
             param = cur_module.get_param()
 
-          
+           
             best_expgol_cnt = {}
             for weight_or_bias in ["weight", "bias"]:
 
-                
+               
                 cur_best_expgol_cnt = None
-                
+              
                 cur_best_rate = 1e9
 
                 sent_param = []
@@ -108,7 +111,7 @@ def quantize_model(frame_encoder,binary_mask,coords,frame_gt,args):
                    
                     current_sent_param = (parameter_value / current_q_step.get(weight_or_bias)).view(-1)
 
-                    if parameter_name.endswith(weight_or_bias):
+                    if weight_or_bias in parameter_name:
                         sent_param.append(current_sent_param)
 
                
@@ -127,7 +130,7 @@ def quantize_model(frame_encoder,binary_mask,coords,frame_gt,args):
             rate_mlp = 0.0
             rate_per_module = frame_encoder.get_network_rate()
             for _, module_rate in rate_per_module.items():
-                for _, param_rate in module_rate.items(): 
+                for _, param_rate in module_rate.items():  # weight, bias
                     rate_mlp += param_rate
 
             loss_fn_output = loss_function(
@@ -140,13 +143,12 @@ def quantize_model(frame_encoder,binary_mask,coords,frame_gt,args):
             )
 
 
-            
+          
             if loss_fn_output.loss < best_loss:
                 best_loss = loss_fn_output.loss
                 best_q_step = current_q_step
                 final_best_expgol_cnt = best_expgol_cnt
-              
-
+               
         frame_encoder.nn_q_step[module_name] = best_q_step
         frame_encoder.nn_expgol_cnt[module_name] = final_best_expgol_cnt
 
@@ -157,7 +159,7 @@ def quantize_model(frame_encoder,binary_mask,coords,frame_gt,args):
         )
 
         cur_module.set_param(q_param)
-       
+        
         setattr(frame_encoder, module_name, cur_module)
 
     return frame_encoder

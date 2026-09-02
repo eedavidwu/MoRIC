@@ -10,17 +10,17 @@ import torch
 from torch import Tensor, nn
 from collections import OrderedDict
 
-
 POSSIBLE_DEVICE = Literal["cpu", "cuda:0"]
 
 
 def get_best_device() -> POSSIBLE_DEVICE:
-    
     if torch.cuda.is_available():
         device = "cuda:0"
     else:
         device = "cpu"
     return device
+
+
 
 
 class TrainingExitCode(Enum):
@@ -29,121 +29,110 @@ class TrainingExitCode(Enum):
 
 
 def is_job_over(start_time: float, max_duration_job_min: int = 45) -> bool:
-    
     if max_duration_job_min < 0:
         return False
 
     return (time.time() - start_time) / 60 >= max_duration_job_min
 
 
+
+
 @dataclass
 class DescriptorNN:
-    
+
     weight: Optional[Union[int, float, str]] = None
     bias: Optional[Union[int, float, str]] = None
 
 
 @dataclass
 class DescriptorCoolChic:
-   
 
     arm: Optional[DescriptorNN] = None
     upsampling: Optional[DescriptorNN] = None
     synthesis: Optional[DescriptorNN] = None
 
 
+
 MAX_ARM_MASK_SIZE = 9
 
 POSSIBLE_Q_STEP_SHIFT = {
     "arm": {
-        "weight": torch.linspace(-8, 0, 9, device="cpu"),
-        "bias": torch.linspace(-16, 0, 17, device="cpu"),
+        "weight": torch.linspace(-8, 0, 9, device="cpu", dtype=torch.int32),
+        "bias":   torch.linspace(-16, 0, 17, device="cpu", dtype=torch.int32),
+    },
+    "ifce": {
+        "weight": torch.linspace(-8, 0, 9, device="cpu", dtype=torch.int32),
+        "bias":   torch.linspace(-16, 0, 17, device="cpu", dtype=torch.int32),
     },
     "conv_mod": {
         "weight": torch.linspace(-12, 0, 13, device="cpu"),
-        "bias": torch.linspace(-24, 0, 25, device="cpu"),
+        "bias":   torch.linspace(-24, 0, 25, device="cpu"),
     },
-    "net": {
-        "weight": torch.linspace(-12, 0, 13, device="cpu"),
-        "bias": torch.linspace(-24, 0, 25, device="cpu"),
-    },
+    
     "upsampling_2d": {
         "weight": torch.linspace(-12, 0, 13, device="cpu"),
-        "bias": torch.linspace(-24, 0, 25, device="cpu"),
+        "bias":   torch.tensor([0.0], device="cpu"),
     },
-    "upsampling_2d_b": {
-        "weight": torch.linspace(-12, 0, 13, device="cpu"),
-        "bias": torch.linspace(-24, 0, 25, device="cpu"),
-    }
+   
 }
+
 POSSIBLE_Q_STEP = {
     "arm": {
         "weight": 2.0 ** POSSIBLE_Q_STEP_SHIFT["arm"]["weight"],
-        "bias": 2.0 ** POSSIBLE_Q_STEP_SHIFT["arm"]["bias"],
+        "bias":   2.0 ** POSSIBLE_Q_STEP_SHIFT["arm"]["bias"],
     },
-    #POSSIBLE_Q_STEP['arm']['weight']
+    "ifce": {
+        "weight": 2.0 ** POSSIBLE_Q_STEP_SHIFT["ifce"]["weight"],
+        "bias":   2.0 ** POSSIBLE_Q_STEP_SHIFT["ifce"]["bias"],
+    },
     "conv_mod": {
         "weight": 2.0 ** POSSIBLE_Q_STEP_SHIFT["conv_mod"]["weight"],
-        "bias": 2.0 ** POSSIBLE_Q_STEP_SHIFT["conv_mod"]["bias"],
+        "bias":   2.0 ** POSSIBLE_Q_STEP_SHIFT["conv_mod"]["bias"],
     },
-    "net": {
-        "weight": 2.0 ** POSSIBLE_Q_STEP_SHIFT["net"]["weight"],
-        "bias": 2.0 ** POSSIBLE_Q_STEP_SHIFT["net"]["bias"],
-    },
+   
     "upsampling_2d": {
         "weight": 2.0 ** POSSIBLE_Q_STEP_SHIFT["upsampling_2d"]["weight"],
-        "bias": 2.0 ** POSSIBLE_Q_STEP_SHIFT["upsampling_2d"]["bias"],
+        "bias":   2.0 ** POSSIBLE_Q_STEP_SHIFT["upsampling_2d"]["bias"],
     },
-    "upsampling_2d_b": {
-        "weight": 2.0 ** POSSIBLE_Q_STEP_SHIFT["upsampling_2d_b"]["weight"],
-        "bias": 2.0 ** POSSIBLE_Q_STEP_SHIFT["upsampling_2d_b"]["bias"],
-    },
+   
 }
 
 POSSIBLE_EXP_GOL_COUNT = {
-    "conv_mod": {
-        "weight": torch.linspace(0, 12, 13, device="cpu"),
-        "bias": torch.linspace(0, 12, 13, device="cpu"),
-    },
     "arm": {
-        "weight": torch.linspace(0, 12, 13, device="cpu"),
-        "bias": torch.linspace(0, 12, 13, device="cpu"),
+        "weight": torch.linspace(0, 12, 13, device="cpu", dtype=torch.int32),
+        "bias":   torch.linspace(0, 12, 13, device="cpu", dtype=torch.int32),
     },
-    "net": {
-        "weight": torch.linspace(0, 12, 13, device="cpu"),
-        "bias": torch.linspace(0, 12, 13, device="cpu"),
+    "ifce": {
+        "weight": torch.linspace(0, 12, 13, device="cpu", dtype=torch.int32),
+        "bias":   torch.linspace(0, 12, 13, device="cpu", dtype=torch.int32),
     },
+    "conv_mod": {
+        "weight": torch.linspace(0, 12, 13, device="cpu", dtype=torch.int32),
+        "bias":   torch.linspace(0, 12, 13, device="cpu", dtype=torch.int32),
+    },
+   
     "upsampling_2d": {
-       "weight": torch.linspace(0, 15, 16, device="cpu"),
-       "bias": torch.linspace(0, 15, 16, device="cpu"),
-   },
-   "upsampling_2d_b": {
-       "weight": torch.linspace(0, 15, 16, device="cpu"),
-       "bias": torch.linspace(0, 15, 16, device="cpu"),
-   },
-    
+        "weight": torch.linspace(0, 12, 13, device="cpu", dtype=torch.int32),
+        "bias":   torch.linspace(0, 12, 13, device="cpu", dtype=torch.int32),
+    },
+   
 }
 
-FIXED_POINT_FRACTIONAL_BITS = 8  
-
-
+FIXED_POINT_FRACTIONAL_BITS = 8
 FIXED_POINT_FRACTIONAL_MULT = 2**FIXED_POINT_FRACTIONAL_BITS
 
-MAX_AC_MAX_VAL = 65535  
-
-
+MAX_AC_MAX_VAL = 65535
 
 def get_q_step_from_parameter_name(
     parameter_name: str, q_step: DescriptorNN
 ) -> Optional[float]:
-   
-    if parameter_name.endswith(".weight"):
+    if ".weight" in parameter_name:
         current_q_step = q_step.get("weight")
-    elif parameter_name.endswith(".bias"):
+    elif ".bias" in parameter_name:
         current_q_step = q_step.get("bias")
     else:
         print(
-            'Parameter name should end with ".weight" or ".bias" '
+            'Parameter name should contain ".weight" or ".bias" '
             f"Found: {parameter_name}"
         )
         current_q_step = None
@@ -155,40 +144,34 @@ def get_q_step_from_parameter_name(
 def measure_expgolomb_rate(
     q_module: nn.Module, q_step: DescriptorNN, expgol_cnt: DescriptorNN
 ) -> DescriptorNN:
-    
     sent_param: DescriptorNN = {"bias": [], "weight": []}
     rate_param: DescriptorNN = {"bias": 0.0, "weight": 0.0}
     
     param = q_module.get_param()
-   
+
     for parameter_name, parameter_value in param.items():
         current_q_step = get_q_step_from_parameter_name(parameter_name, q_step)
-       
         if current_q_step is None:
             return rate_param
 
-        
         current_sent_param = (parameter_value / current_q_step).view(-1)
 
-        if parameter_name.endswith(".weight"):
+        if ".weight" in parameter_name:
             sent_param["weight"].append(current_sent_param)
-        elif parameter_name.endswith(".bias"):
+        elif ".bias" in parameter_name:
             sent_param["bias"].append(current_sent_param)
         else:
             print(
-                'Parameter name should end with ".weight" or ".bias" '
+                'Parameter name should contain ".weight" or ".bias" '
                 f"Found: {parameter_name}"
             )
             return rate_param
 
-   
     for k, v in sent_param.items():
-        
         if len(v) == 0:
             rate_param[k] = 0.0
             continue
 
-        
         current_expgol_cnt = expgol_cnt[k]
         if current_expgol_cnt is None:
             return rate_param
@@ -201,7 +184,7 @@ def measure_expgolomb_rate(
 
 
 def exp_golomb_nbins(symbol: Tensor, count: int = 0) -> Tensor:
-    
+
     nbins = (
         2 * torch.floor(torch.log2(symbol.abs() / (2**count) + 1))
         + count
@@ -213,8 +196,8 @@ def exp_golomb_nbins(symbol: Tensor, count: int = 0) -> Tensor:
 
 
 
+
 def mem_info(strinfo: str = "Memory allocated") -> None:
-    
     mem_cpu = psutil.Process().memory_info().rss
     mem_cpu_GB = mem_cpu / (1024.0 * 1024.0 * 1024.0)
 
@@ -228,6 +211,7 @@ def mem_info(strinfo: str = "Memory allocated") -> None:
     print(f'{" "*100}{"-"*L}')
     print(f'{" "*100}{str_display}')
     print(f'{" "*100}{"-"*L}')
+
 
 
 proba0MPS = torch.tensor(
@@ -301,9 +285,7 @@ proba0MPS = torch.tensor(
 
 
 def bac_state_idx_from_proba_0(p0):
-   
     states = torch.argmin((proba0MPS - p0).abs())
-   
     state = states.item()
 
-    return state * 2 + 1 
+    return state * 2 + 1

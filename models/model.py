@@ -1,10 +1,22 @@
-
+import os
+from asyncio import base_tasks
 import torch
 from torch import nn
 import torch.nn.functional as F
+from torch.utils.data import DataLoader, Dataset
 import math
+import argparse
+import random
+from PIL import Image
+from torchvision.transforms import Resize, Compose, ToTensor, Normalize
 import numpy as np
+import skimage
+import matplotlib.pyplot as plt
+from torch.optim.lr_scheduler import CosineAnnealingLR
 import torch.autograd as autograd
+import torchvision.transforms as transforms
+from torchvision import datasets, transforms
+import torchvision.utils as vutils
 from torch import Tensor, index_select, nn
 
 from utils.quantizer import quantize
@@ -15,8 +27,12 @@ from utils.arm import (
     _laplace_cdf,
 )
 from utils.upsampling import Upsampling
+from utils.eval_model import eval_model,compute_model_rate
 
+from utils.quantizemodel import quantize_model
 from enc.utils.misc import (
+    MAX_ARM_MASK_SIZE,
+    POSSIBLE_DEVICE,
     DescriptorCoolChic,
     DescriptorNN,
     measure_expgolomb_rate,
@@ -24,7 +40,6 @@ from enc.utils.misc import (
 from typing import Any, Dict, List, Optional, OrderedDict, Tuple, TypedDict
 from itertools import islice
 class PosEncodingNeRF(nn.Module):
-    '''Module to add positional encoding as in NeRF [Mildenhall et al. 2020].'''
     def __init__(self, in_features, sidelength=None, fn_samples=None, use_nyquist=True):
         super().__init__()
 
@@ -70,12 +85,10 @@ class PosEncodingNeRF(nn.Module):
 class GetSubnet(autograd.Function):
     @staticmethod
     def forward(ctx, scores, k):
-       
         out = scores.clone()
         _, idx = scores.flatten().sort()
         j = int((1 - k) * scores.numel())
 
-       
         flat_out = out.flatten()
         flat_out[idx[:j]] = 0
         flat_out[idx[j:]] = 1
@@ -83,19 +96,16 @@ class GetSubnet(autograd.Function):
 
     @staticmethod
     def backward(ctx, g):
-       
         return g, None
 
 class GetSubnet_batch(autograd.Function):
     @staticmethod
     def forward(ctx, scores, k):
-        
         out = scores.clone()
         
         batch_size,w1,w2=scores.shape
         score_reshape=scores.view(batch_size,-1)
         _, indices = torch.sort(score_reshape, dim=1, descending=True)
-       
         j = int((1 - k) * score_reshape.size(1))
 
         binary_mask = torch.zeros_like(score_reshape)
@@ -105,13 +115,11 @@ class GetSubnet_batch(autograd.Function):
 
     @staticmethod
     def backward(ctx, g):
-       
         return g, None
 
 class NonAffineBatchNorm(nn.BatchNorm1d):
     def __init__(self, dim):
         super(NonAffineBatchNorm, self).__init__(dim, affine=False)
-
 
 class SynthesisLayer(nn.Module):
     def __init__(
@@ -121,7 +129,6 @@ class SynthesisLayer(nn.Module):
         kernel_size: int,
         non_linearity: nn.Module = nn.Identity()
     ):
-       
         super().__init__()
 
         self.pad = nn.ReplicationPad2d(int((kernel_size - 1) / 2))
@@ -133,7 +140,6 @@ class SynthesisLayer(nn.Module):
 
         self.non_linearity = non_linearity
 
-       
         with torch.no_grad():
             self.conv_layer.weight.data = self.conv_layer.weight.data / output_ft ** 2
             self.conv_layer.bias.data = self.conv_layer.bias.data * 0.
@@ -149,7 +155,6 @@ class SynthesisResidualLayer(nn.Module):
         kernel_size: int,
         non_linearity: nn.Module = nn.Identity()
     ):
-       
         super().__init__()
 
         assert input_ft == output_ft,\
@@ -171,166 +176,101 @@ class SynthesisResidualLayer(nn.Module):
     def forward(self, x: Tensor) -> Tensor:
         return self.non_linearity(self.conv_layer(self.pad(x)) + x)
 
-class ModConv(nn.Module):
-    def __init__(
-        self,
-        in_channels,
-        hid_channels,
-        out_channels,
-        mod_layer,
-    ):
+
+class MultiRegionBlock(nn.Module):
+
+    def __init__(self, K, in_channels, global_hid_channels, local_hid_channels,
+                 out_channels):
         super().__init__()
-        self.residual = False
-        self.hid_channels=hid_channels
-        self.hid_layer=mod_layer
-       
+        self.K = K
 
-        self.conv1_1 = SynthesisLayer(in_channels,hid_channels,1,nn.GELU())
-        self.conv1_2 = SynthesisLayer(hid_channels,3,1,nn.GELU())
-        self.conv2_1 = SynthesisResidualLayer(3,3,3,nn.GELU())
-        self.conv2_2 = SynthesisResidualLayer(3,3,3)
+        self.region_nets = nn.ModuleList([
+            nn.Sequential(
+                SynthesisLayer(2, local_hid_channels, 1, nn.GELU()),
+                SynthesisResidualLayer(local_hid_channels, local_hid_channels, 1, nn.GELU()),
+                SynthesisResidualLayer(local_hid_channels, local_hid_channels, 1, nn.GELU()),
+                SynthesisResidualLayer(local_hid_channels, 3, 1),
+            ) for _ in range(K)
+        ])
+        self.agg_func = nn.ModuleList([
+            SynthesisLayer(global_hid_channels + 6,  3, 1, nn.GELU()),
+            SynthesisLayer(global_hid_channels + 9,  3, 1, nn.GELU()),
+            SynthesisLayer(global_hid_channels + 12, 3, 1, nn.GELU()),
+        ])
+        self.full_net = nn.Sequential(
+            SynthesisLayer(in_channels, global_hid_channels, 1, nn.GELU()),
+            SynthesisLayer(global_hid_channels, 3, 1, nn.GELU()),
+            SynthesisResidualLayer(3, 3, 3, nn.GELU()),
+            SynthesisResidualLayer(3, 3, 3, nn.GELU()),
+        )
 
     def get_param(self) -> OrderedDict[str, Tensor]:
-        
         return OrderedDict({k: v.detach().clone() for k, v in self.named_parameters()})
+
     def set_param(self, param: OrderedDict[str, Tensor]) -> None:
-        
         self.load_state_dict(param)
 
-    def forward(self, x):
-        
-        out_0=self.conv1_1(x) 
-        out_1=self.conv1_2(out_0)
-      
-        out_2=self.conv2_1(out_1)
-        out_3=self.conv2_2(out_2)
-       
-        return out_3
-class LocallyConnectedBlock(nn.Module):
-    def __init__(self, in_channels, global_hid_channels, local_hid_channels, out_channels, mod_layer):
-        super().__init__()
-        self.net = []
-        self.net.append(nn.Sequential(
-           SynthesisLayer(2,local_hid_channels,1,nn.GELU())
-        ))
-        self.net.append(nn.Sequential(
-           SynthesisResidualLayer(local_hid_channels,local_hid_channels,1,nn.GELU())
-        ))
-        self.net.append(nn.Sequential(
-           SynthesisResidualLayer(local_hid_channels,local_hid_channels,1,nn.GELU())
-        ))
-        self.net.append(nn.Sequential(
-           SynthesisResidualLayer(local_hid_channels,3,1)
-        ))
+    def forward(self, coordinate, combined_latent, masks_full_res):
+        device = combined_latent.device
+        masks_full_res = masks_full_res.to(device).bool()
 
-        self.net = nn.Sequential(*self.net)
-
-        self.global_net = []
-        self.global_net.append(SynthesisLayer(2,local_hid_channels,1,nn.GELU()))
-        self.global_net.append(SynthesisResidualLayer(local_hid_channels,local_hid_channels,1,nn.GELU()))
-        self.global_net.append(SynthesisResidualLayer(local_hid_channels,local_hid_channels,1,nn.GELU()))
-        self.global_net.append(SynthesisResidualLayer(local_hid_channels,3,1))
-
-        self.global_net = nn.Sequential(*self.global_net)
-    def get_param(self) -> OrderedDict[str, Tensor]:
-        
-        return OrderedDict({k: v.detach().clone() for k, v in self.named_parameters()})
-    def set_param(self, param: OrderedDict[str, Tensor]) -> None:
-        
-        self.load_state_dict(param)
-    
-    def forward(self, x, y):
-        
-        output_local = self.net(x)
-        output_global= self.global_net(y)
-        
-        return output_local,output_global
-    
-class LocalGlobalBlock(LocallyConnectedBlock):
-    def __init__(self, in_channels, global_hid_channels,local_hid_channels, out_channels, mod_layer,mask):
-        super().__init__(in_channels, global_hid_channels, local_hid_channels, out_channels, mod_layer)
-        
-        self.mask = mask
-        self.agg_func = []
-
-        self.agg_func.append(nn.Sequential(SynthesisLayer(global_hid_channels+6,3,1,nn.GELU())))
-        self.agg_func.append(nn.Sequential(SynthesisLayer(global_hid_channels+9,3,1,nn.GELU())))
-        self.agg_func.append(nn.Sequential(SynthesisLayer(global_hid_channels+12,3,1,nn.GELU())))
-        self.agg_func = nn.Sequential(*self.agg_func)
-
-
-        self.full_net = []
-        self.full_net.append(SynthesisLayer(in_channels,global_hid_channels,1,nn.GELU()))
-        self.full_net.append(SynthesisLayer(global_hid_channels,3,1,nn.GELU()))
-        self.full_net.append(SynthesisResidualLayer(3,3,3,nn.GELU()))
-        self.full_net.append(SynthesisResidualLayer(3,3,3,nn.GELU()))
-      
-
-        self.full_net = nn.Sequential(*self.full_net)
-    def get_param(self) -> OrderedDict[str, Tensor]:
-       
-        return OrderedDict({k: v.detach().clone() for k, v in self.named_parameters()})
-    def set_param(self, param: OrderedDict[str, Tensor]) -> None:
-       
-        self.load_state_dict(param)
-    def forward(self, coordinate,combined_latent):
-
-        coordinate = coordinate
-        self.mask = self.mask.bool()
-        
-        object_latent = torch.zeros_like(coordinate)
-        background_latent = torch.zeros_like(coordinate)
-        object_latent[self.mask.expand_as(coordinate)] = coordinate[self.mask.expand_as(coordinate)]
-        background_latent[~self.mask.expand_as(coordinate)] = coordinate[~self.mask.expand_as(coordinate)]
-        
         all_outputs = []
-        out_full = []
-        
-        global_layer_input = background_latent
-        local_layer_input = object_latent
-        full_layer_input = combined_latent
-        id=0
-        
-        for full_layer in self.full_net:
-          full_layer_input = full_layer(full_layer_input)
-          all_outputs.append(full_layer_input)
-        
-        out_full.append(torch.cat(all_outputs[:2], dim=1)) 
-        out_full.append(torch.cat(all_outputs[:3], dim=1))
-        out_full.append(torch.cat(all_outputs, dim=1))             
-        
-        
-        for local_layer, global_layer, agg_layer in zip(self.net, self.global_net,self.agg_func):
-            local_layer_input = local_layer(local_layer_input)
-            global_layer_input = global_layer(global_layer_input)
-            
-            
-            if id<3:
-                
-                device =  out_full[id].device  
-                self.mask = self.mask.to(device)  
-                self.mask = self.mask.squeeze()
-                output_full_local = torch.where(self.mask, out_full[id], torch.zeros_like(out_full[id], device=device))
-                output_full_global = torch.where(~self.mask, out_full[id], torch.zeros_like(out_full[id], device=device))
-                global_layer_input = agg_layer(torch.cat([global_layer_input,output_full_global],dim=-3))
-                local_layer_input = agg_layer(torch.cat([local_layer_input,output_full_local],dim=-3))
-                
-            id+=1
-        global_layer_input = self.global_net[-1](global_layer_input)
-        local_layer_input = self.net[-1](local_layer_input)
+        x = combined_latent
+        for layer in self.full_net:
+            x = layer(x)
+            all_outputs.append(x)
 
-        return local_layer_input,global_layer_input
+        out_full = [
+            torch.cat(all_outputs[:2], dim=1),
+            torch.cat(all_outputs[:3], dim=1),
+            torch.cat(all_outputs,     dim=1),
+        ]
+
+        agg_layers = list(self.agg_func)
+        B = combined_latent.shape[0]
+        H, W = masks_full_res.shape[-2], masks_full_res.shape[-1]
+        output = torch.zeros(B, 3, H, W, device=device, dtype=combined_latent.dtype)
+
+        for k in range(self.K):
+            mask_k = masks_full_res[k]
+            mask_k_b1hw = mask_k.unsqueeze(0).unsqueeze(0)
+
+            local_input = coordinate * mask_k_b1hw
+            net_k = list(self.region_nets[k].children())
+
+            for i in range(3):
+                local_input = net_k[i](local_input)
+                full_k = torch.where(
+                    mask_k_b1hw.expand_as(out_full[i]),
+                    out_full[i],
+                    torch.zeros_like(out_full[i]),
+                )
+                local_input = agg_layers[i](torch.cat([local_input, full_k], dim=-3))
+
+            local_input = net_k[3](local_input)
+            output = output + local_input * mask_k_b1hw
+
+        return output
+
 
 class Masked_INR(nn.Module):
-    def __init__(self, args,target_mask,sparsity,in_features,  out_features, hidden_features, hidden_layers):
+    def __init__(self, args, region_map, sparsity, in_features, out_features,
+                 hidden_features, hidden_layers, num_regions=None):
         super().__init__()
-        self.sparsity=sparsity
+        self.sparsity = sparsity
         self.net = []
-       
-        self.h = target_mask.shape[-2]
-        self.w = target_mask.shape[-1]
-      
-        self.target_mask = target_mask
+
+        if region_map.dim() == 4:
+            rmap = region_map.squeeze(0).squeeze(0).long()
+        elif region_map.dim() == 2:
+            rmap = region_map.long()
+        else:
+            raise ValueError(f"region_map must be 2-D or 4-D, got {tuple(region_map.shape)}")
+
+        self.h = rmap.shape[-2]
+        self.w = rmap.shape[-1]
+        self.K = int(num_regions) if num_regions is not None else int(rmap.max().item()) + 1
+        self.region_map = rmap
         self.pe_flag=0
         if self.pe_flag==1:
             self.pe=PosEncodingNeRF(2,(self.h,self.w))
@@ -339,23 +279,26 @@ class Masked_INR(nn.Module):
             input_dim=2
 
        
+        ups_preconcat_k = int(getattr(args, 'upsampling_preconcat_kernel_size', 7))
+        n_kern = max(1, int(args.mod_base) - 1)
         self.upsampling_2d = Upsampling(
-            args.local_upsampling_kernel_size, args.static_upsampling_kernel,args.highest_flag
+            ups_k_size=args.local_upsampling_kernel_size,
+            ups_preconcat_k_size_or_static=ups_preconcat_k,
+            n_ups_kernel_or_highest=n_kern,
+            n_ups_preconcat_kernel=n_kern,
         )
-        
         self.dim_arm=args.dim_arm_mod
         self.n_hidden_layers_arm=2
-        self.arm = Arm(args.context_arm,args.dim_arm_mod, self.n_hidden_layers_arm)
-        
-       
+        arm_context_num = args.context_arm
+        self.arm = Arm(arm_context_num, args.dim_arm_mod, self.n_hidden_layers_arm)
+
         self.quantizer_type="softround"
-        self.quantizer_noise_type="kumaraswamy"
-        self.soft_round_temperature=0.3
-        self.noise_parameter=2.0 ##1 means uniform....
+        self.quantizer_noise_type="gaussian"
+        self.soft_round_temperature=0.35
+        self.noise_parameter=0.22
         max_mask_size = 9
-       
         self.modulation_base_number=args.mod_base
-      
+       
         self.fact_shape=[]
         if args.highest_flag==1:
             for i in range (self.modulation_base_number):
@@ -371,7 +314,7 @@ class Masked_INR(nn.Module):
         )
         
         self.mask_size=9
-        self.encoder_gains_sf=16
+        self.encoder_gains_sf = getattr(args, 'encoder_gain', 16)
         print('Quantizer parameter: encoding gain ',self.encoder_gains_sf)
 
         self.all_pix_num=self.h*self.w//args.scale//args.scale
@@ -383,70 +326,65 @@ class Masked_INR(nn.Module):
             persistent=False,
         )
        
-        self.latent_factor=args.latent_factor
+        self.latent_factor = args.latent_factor
 
-        self.conv_mod = LocalGlobalBlock(in_channels=self.modulation_base_number, global_hid_channels=args.sythesis_features,local_hid_channels=3, out_channels=hidden_layers+1, mod_layer=args.mod_hid_layer, mask=self.target_mask)
+        self.conv_mod = MultiRegionBlock(
+            K=self.K,
+            in_channels=self.modulation_base_number,
+            global_hid_channels=args.sythesis_features,
+            local_hid_channels=3,
+            out_channels=hidden_layers + 1,
+        )
 
-        self.modules_to_send=['arm','conv_mod','upsampling_2d']
-
+        self.modules_to_send = ['arm', 'conv_mod', 'upsampling_2d']
         self.nn_q_step: Dict[str, DescriptorNN] = {
             k: {"weight": None, "bias": None} for k in self.modules_to_send
         }
         self.nn_expgol_cnt: Dict[str, DescriptorNN] = {
             k: {"weight": None, "bias": None} for k in self.modules_to_send
         }
-        self.modulation_sf= nn.ParameterList()
 
-        self.mask_sf = []
+        self.modulation_sf = nn.ParameterList()
+
+        self.region_mask_sf = []
+        one_hot = F.one_hot(rmap.to('cuda'), num_classes=self.K).permute(2, 0, 1).float()
+        cur_one_hot = one_hot.unsqueeze(0)
+
         for layer_idx in range(self.modulation_base_number):
-            mod_shape=self.fact_shape[layer_idx]
-            shits =  nn.Parameter(torch.zeros(args.batch_size,1,  mod_shape[0], mod_shape[1])).cuda()#.requires_grad=True
-            if layer_idx>0:
-                masks = F.max_pool2d(target_mask.float(), kernel_size=2)
-            else:
-                masks = target_mask
-            target_mask = masks
-            self.mask_sf.append(masks.cuda())
+            mod_shape = self.fact_shape[layer_idx]
+            shits = nn.Parameter(
+                torch.zeros(args.batch_size, 1, mod_shape[0], mod_shape[1])
+            ).cuda()
             self.modulation_sf.append(shits)
-            print('Get Mod with shape',shits.shape,'at layer:',layer_idx+1)
-        
 
-    def quantize_all_latent(self,latent,coords):
-        q_shifts_all=[]
-  
-        q_shifts_all_for_conv=[]
-        q_shifts_all_for_conv_o=[]
-        q_shifts_all_for_conv_b=[]
+            if layer_idx > 0:
+                cur_one_hot = F.avg_pool2d(cur_one_hot, kernel_size=2, stride=2)
+            argmax = cur_one_hot.squeeze(0).argmax(dim=0)
+            masks_K = F.one_hot(argmax, num_classes=self.K).permute(2, 0, 1).bool()
+            self.region_mask_sf.append(masks_K.cuda())
+            print(f'Get Mod with shape {tuple(shits.shape)} at layer {layer_idx+1};'
+                  f' region mask {tuple(masks_K.shape)}')
+
+    def quantize_all_latent(self, latent, coords):
+        q_main = []
         for id in range(len(latent)):
-           
-            q_shifts_id = quantize(
-                            latent[id] * self.encoder_gains_sf,
-                            self.quantizer_noise_type if self.training else "none",
-                            self.quantizer_type if self.training else "hardround",
-                            self.soft_round_temperature,
-                            self.noise_parameter,)
+            q_main.append(quantize(
+                latent[id] * self.encoder_gains_sf,
+                self.quantizer_noise_type if self.training else "none",
+                self.quantizer_type if self.training else "hardround",
+                self.soft_round_temperature,
+                self.noise_parameter,
+            ))
 
-            q_shifts_all_for_conv_o.append(q_shifts_id*self.mask_sf[len(latent)-id-1])
-            q_shifts_all_for_conv_b.append(q_shifts_id*(~self.mask_sf[len(latent)-id-1].bool()))
-            q_shifts_all_for_conv.append(q_shifts_id)
-        
-        q_upsample_conv=(self.upsampling_2d(q_shifts_all_for_conv, self.mask_sf))
-      
+        q_upsample_conv = self.upsampling_2d(q_main)
+        full_res_masks = self.region_mask_sf[0]
+        recon_image = self.conv_mod(coords, q_upsample_conv, full_res_masks)
+        return q_main, recon_image
 
 
-
-        weight_shift_all,weight_shift_all_b=self.conv_mod(coords, q_upsample_conv)
-
-
-        return q_shifts_all_for_conv,weight_shift_all,weight_shift_all_b
-    
-
-  
     def get_param(self):
-       
       
         param = OrderedDict()
-       
         param.update({f"conv_mod.{k}": v for k, v in self.conv_mod.get_param().items()})
         param.update({f"arm.{k}": v for k, v in self.arm.get_param().items()})
         param.update({f"upsampling_2d.{k}": v for k, v in self.upsampling_2d.get_param().items()})
@@ -456,8 +394,7 @@ class Masked_INR(nn.Module):
         
         
     def set_param(self, param):
-       
-       
+        
         conv_mod_param = {k[len("conv_mod.") :]: v for k, v in param.items() if k.startswith("conv_mod.")}
         arm_param = {k[len("arm.") :]: v for k, v in param.items() if k.startswith("arm.")}
         upsampling_param = {k[len("upsampling_2d.") :]: v for k, v in param.items() if k.startswith("upsampling_2d.")}
@@ -467,34 +404,33 @@ class Masked_INR(nn.Module):
         self.upsampling_2d.set_param(upsampling_param)
         modulation_sf_param = {int(k.split(".")[1]): v for k, v in param.items() if k.startswith("modulation_sf.")}
         for i, v in modulation_sf_param.items():
-            self.modulation_sf[i].data.copy_(v.data)  
-    
-    def estimate_rate(self, decoder_side_latent,arm_model):
-        flat_context = torch.cat(
-            [
-                _get_neighbor(spatial_latent_i, self.mask_size, self.non_zero_pixel_ctx_index)
-                for i,spatial_latent_i in enumerate(decoder_side_latent)
-            ],
-            dim=0,
-        )
-        
-        flat_latent = torch.cat(
-            [spatial_latent_i.view(-1) for i,spatial_latent_i in enumerate(decoder_side_latent)],
-            dim=0
-        )
-       
-        flat_context_in=flat_context.unsqueeze(0).transpose(1, 2)
-        
-        flat_mu, flat_scale, flat_log_scale__ = arm_model(flat_context_in)
+            self.modulation_sf[i].data.copy_(v.data)
+
+    def estimate_rate(self, decoder_side_latent, arm_model):
+        flat_context_list = []
+        flat_latent_list = []
+
+        for k, spatial_latent in enumerate(decoder_side_latent):
+            s_k = _get_neighbor(
+                spatial_latent, self.mask_size, self.non_zero_pixel_ctx_index
+            )
+
+            flat_context_list.append(s_k)
+            flat_latent_list.append(spatial_latent.view(-1))
+
+        flat_context = torch.cat(flat_context_list, dim=0)
+        flat_latent = torch.cat(flat_latent_list, dim=0)
+        arm_input = flat_context
+
+        flat_mu, flat_scale, flat_log_scale__ = arm_model(arm_input)
         proba = torch.clamp_min(
             _laplace_cdf(flat_latent + 0.5, flat_mu, flat_scale)
             - _laplace_cdf(flat_latent - 0.5, flat_mu, flat_scale),
-            min=2**-16,  
+            min=2**-16,
         )
         flat_rate = -torch.log2(proba)
         return flat_rate
     def get_network_rate(self):
-        
         rate_per_module: DescriptorCoolChic = {
             module_name: {"weight": 0.0, "bias": 0.0}
             for module_name in self.modules_to_send
@@ -524,25 +460,40 @@ class Masked_INR(nn.Module):
         return out_num
 
     
+    def _bucket_rate_per_region(self, flat_rate, decoder_side_latent):
+        flat_rate = flat_rate.view(-1)
+        K = self.K
+        device = flat_rate.device
+        rate_per_region = torch.zeros(K, device=device, dtype=flat_rate.dtype)
+        pix_per_region  = torch.zeros(K, device=device, dtype=flat_rate.dtype)
+
+        L = self.modulation_base_number
+
+        offset = 0
+        for s, latent_i in enumerate(decoder_side_latent):
+            n_pix = latent_i.numel()
+            rate_i = flat_rate[offset:offset + n_pix]
+            offset += n_pix
+
+            mask_i = self.region_mask_sf[L - 1 - s]
+            for k in range(K):
+                m = mask_i[k].flatten()
+                rate_per_region[k] = rate_per_region[k] + rate_i[m].sum()
+                pix_per_region[k]  = pix_per_region[k]  + m.sum().to(pix_per_region.dtype)
+        return rate_per_region, pix_per_region
+
     def forward(self, coords, in_mask=None):
-        saved_mask=[]
-        if self.pe_flag==1:
-            input_ = self.pe(coords)
-        else:
-            input_=coords
-            
-        q_shifts_all_viewed,weighted_q_shift_all,weight_shift_all_b=self.quantize_all_latent(self.modulation_sf,coords)
-        
-        input_ = weighted_q_shift_all
-        input_1 = weight_shift_all_b
-        mask_b = ~self.mask_sf[0]
-        flat_rate= self.estimate_rate(q_shifts_all_viewed,self.arm)
-        batch_size = input_.shape[0]
-        input_ = input_.view(batch_size,3, -1)[:,:,self.mask_sf[0].flatten().bool()]
-        input_1 = input_1.view(batch_size,3, -1)[:,:,mask_b.flatten().bool()]
-        total_length = self.h*self.w
-        
-        concatenated_input = torch.zeros(batch_size, 3, total_length,device=input_.device)
-        concatenated_input[:, :, self.mask_sf[0].flatten().bool()] = input_
-        concatenated_input[:, :, mask_b.flatten().bool()] = input_1
-        return concatenated_input.permute(0,2,1),flat_rate,saved_mask
+        if self.pe_flag == 1:
+            _ = self.pe(coords)
+
+        q_main, recon_image = self.quantize_all_latent(self.modulation_sf, coords)
+        flat_rate = self.estimate_rate(q_main, self.arm)
+        rate_per_region, pix_per_region = self._bucket_rate_per_region(
+            flat_rate, q_main
+        )
+
+        B = recon_image.shape[0]
+        pixels_flat = recon_image.permute(0, 2, 3, 1).reshape(B, -1, 3)
+        return pixels_flat, rate_per_region, pix_per_region
+
+
