@@ -26,6 +26,7 @@
 </p>
 
 ## 📣 Latest Updates
+- **[2026-9-02]** 📝 *Updated actual bistream*
 - **[2025-11-03]** 📝 *Detailed intermediate results are now released on [results](https://github.com/eedavidwu/MoRIC/tree/main/results).*
 - **[2025-10-31]** 🎉 *MoRIC has been accepted to **NeurIPS 2025**.
 
